@@ -1,38 +1,27 @@
 <#
 .SYNOPSIS
-  rmk - Secure Remove for Windows (PowerShell)
-  
+  rmk - Deletes a file/folder, freeing up space and attempting to destroy the data.
+
 .DESCRIPTION
-  Deletes files/folders by attempting to overwrite them before removal. 
-  Windows lacks a native 'shred' utility. This script attempts to use SDelete
-  (from Sysinternals/Microsoft) if it is installed; otherwise, it falls back to
-  Remove-Item (a standard deletion, which is NOT forensically secure on SSDs). 
-  
-  For truly secure deletion on an SSD, use BitLocker disk encryption or the
-  ATA/NVMe Secure Erase feature provided by the disk manufacturer.
-  
-.PARAMETER Path
-  The path to the file or folder to be deleted.
+  For Windows on an SSD:
+  1. Attempts to overwrite the data using SDelete (Sysinternals), if available. 
+  2. Deletes the file/folder from the file system (frees up space). 
+  3. Attempts to force a TRIM operation on the volume (requires administrator privileges). 
 
-.PARAMETER Passes
-  The number of overwrite passes (applies only if SDelete is available). 
-  Default: 1
-
-.NOTES
-  Requires PowerShell. Run as follows:
-  .\rmk.ps1 "C:\path\to\file"
+  WARNING: On an unencrypted SSD, no software can guarantee the physical
+  erasure of an individual file. To ensure that data is truly unrecoverable,
+  enable BitLocker on your drive.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [string]$Path,
-    [int]$Passes = 1
+    [string]$Path
 )
-if (-not (Test-Path $Path -PathType Leaf) -and -not (Test-Path $Path -PathType Container)) {
-    Write-Error "Error: '$Path' It does not exist."
+if (-not (Test-Path $Path)) {
+    Write-Error "Error: '$Path' it does not exist."
     exit 1
 }
-# Search for sdelete.exe in the PATH or in common Sysinternals locations
+# --- Step 1: Attempt to overwrite using SDelete if it exists ---
 $sdelete = Get-Command sdelete.exe -ErrorAction SilentlyContinue
 if (-not $sdelete) {
     $candidates = @(
@@ -46,28 +35,37 @@ if (-not $sdelete) {
     }
 }
 if ($sdelete) {
-    Write-Host "Using SDelete ($sdelete) with $Passes pass(es)..." -ForegroundColor Cyan
+    Write-Host "Overwriting with SDelete..." -ForegroundColor Cyan
     if (Test-Path $Path -PathType Container) {
-        # Folder: /s recursive, /p passes, /q quiet, /a includes hidden/system files
-        & $sdelete -s -p $Passes -q -a $Path
+        & $sdelete -s -p 1 -q -a $Path
     } else {
-        & $sdelete -p $Passes -q -a $Path
+        & $sdelete -p 1 -q -a $Path
     }
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "SDelete failed with code $LASTEXITCODE"
-        exit $LASTEXITCODE
+        Write-Warning "SDelete failed, but the standard deletion process will continue."
     }
 } else {
-    Write-Warning "SDelete not found. Remove-Item will be used (standard deletion; NOT secure on an SSD)."
+    Write-Warning "SDelete not found. Standard deletion will be used."
     Write-Host "Download SDelete from: https://learn.microsoft.com/sysinternals/downloads/sdelete" -ForegroundColor Yellow
-    if (Test-Path $Path -PathType Container) {
-        $reply = Read-Host "Confirm folder deletion '$Path' and ALL of its content? [y/N]"
-        if ($reply -notmatch '^[sSyY]$') { Write-Host "Canceled."; exit 1 }
-        Remove-Item -Recurse -Force -Path $Path
-    } else {
-        $reply = Read-Host "¿Confirmar eliminación de '$Path'? [s/N]"
-        if ($reply -notmatch '^[sSyY]$') { Write-Host "Canceled."; exit 1 }
-        Remove-Item -Force -Path $Path
+}
+# --- Step 2: Confirmation and deletion of the file system ---
+if (Test-Path $Path -PathType Container) {
+    $reply = Read-Host "Delete folder '$Path' and ALL its contents? [y/N]"
+    if ($reply -notmatch '^[sSyY]$') { Write-Host "Canceled."; exit 1 }
+    Remove-Item -Recurse -Force -Path $Path
+} else {
+    $reply = Read-Host "Delete '$Path'? [y/N]"
+    if ($reply -notmatch '^[sSyY]$') { Write-Host "Canceled."; exit 1 }
+    Remove-Item -Force -Path $Path
+}
+Write-Host "Removed from the file system. Space freed up." -ForegroundColor Green
+# --- Step 3: Force TRIM (requires administrator) ---
+$volume = Split-Path $Path -Qualifier
+if ($volume) {
+    try {
+        Optimize-Volume -DriveLetter $volume.Replace(':','') -ReTrim -ErrorAction Stop
+        Write-Host "Forced TRIM on $volume" -ForegroundColor Green
+    } catch {
+        Write-Warning "Could not force TRIM (run PowerShell as Administrator)."
     }
 }
-Write-Host "Done." -ForegroundColor Green
