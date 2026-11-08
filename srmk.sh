@@ -15,19 +15,19 @@
 rmk() {
     _rmk_target="$1"
     if [ -z "$_rmk_target" ]; then
-        echo "Uso: rmk <archivo|carpeta>"
+        echo "Usage: rmk <archivo|carpeta>"
         return 1 2>/dev/null || exit 1
     fi
     if [ ! -e "$_rmk_target" ] && [ ! -L "$_rmk_target" ]; then
-        echo "Error: '$_rmk_target' no existe."
+        echo "Error: '$_rmk_target' it does not exist."
         return 1 2>/dev/null || exit 1
     fi
     if [ -d "$_rmk_target" ] && [ ! -L "$_rmk_target" ]; then
-        printf "¿Eliminar carpeta '%s' y TODO su contenido? [s/N] " "$_rmk_target"
+        printf "Delete folder '%s' and ALL its contents? [y/N] " "$_rmk_target"
         read -r _rmk_reply
         case "$_rmk_reply" in
             s|S|y|Y) ;;
-            *) echo "Cancelado."; return 1 2>/dev/null || exit 1 ;;
+            *) echo "Canceled."; return 1 2>/dev/null || exit 1 ;;
         esac
         find "$_rmk_target" -type f -exec shred -zu -n 1 -v {} +
         find "$_rmk_target" -type l -delete
